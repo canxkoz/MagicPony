@@ -1,16 +1,23 @@
+import matplotlib
+matplotlib.use('Agg')
 import numpy as np
 import torch
 import torch.nn as nn
+import pytorch3d
 import nvdiffrast.torch as dr
 import matplotlib.pyplot as plt
 import os
+import math
 import os.path as osp
 from einops import rearrange
 from .utils import misc
 from .dataloaders import get_sequence_loader, get_image_loader
 from .render import util
 from .render import render
+from .render import obj
 from .predictor import PriorPredictor, InstancePredictor
+
+import cv2
 
 
 def validate_tensor_to_device(x, device):
@@ -60,7 +67,7 @@ class MagicPony:
         self.arti_reg_loss_epochs = np.arange(*cfgs.get('arti_reg_loss_epochs', [0, self.num_epochs]))
         self.render_flow = self.cfgs.get('flow_loss_weight', 0.) > 0.
         
-        self.glctx = dr.RasterizeGLContext()
+        self.glctx = dr.RasterizeCudaContext()
         self.in_image_size = cfgs.get('in_image_size', 128)
         self.out_image_size = cfgs.get('out_image_size', 128)
         self.cam_pos_z_offset = cfgs.get('cam_pos_z_offset', 10.)
@@ -109,7 +116,7 @@ class MagicPony:
                 **kwargs)
         
         elif data_type == 'image':
-            get_loader = lambda is_train, random_sample=False, **kwargs: get_image_loader(
+            get_loader = lambda is_train, random_sample_frames=False, **kwargs: get_image_loader(
                 batch_size=batch_size,
                 num_workers=num_workers,
                 in_image_size=in_image_size,
@@ -304,6 +311,16 @@ class MagicPony:
     
     def forward(self, batch, epoch, logger=None, total_iter=None, save_results=False, save_dir=None, logger_prefix='', is_training=True):
         input_image, mask_gt, mask_dt, mask_valid, flow_gt, bbox, bg_image, dino_feat_im, dino_cluster_im, seq_idx, frame_idx = (*map(lambda x: validate_tensor_to_device(x, self.device), batch),)
+
+        # BFxCxHxW
+        input_image = input_image.transpose(1, 0) # 1 batch, 6 frame, 3 channel, 256H, 256W --> 6, 1, 3, 256, 256
+        mask_gt = mask_gt.transpose(1, 0)
+        mask_dt = mask_dt.transpose(1, 0)
+        mask_valid = mask_valid.transpose(1, 0)
+        mask_valid = mask_valid.squeeze(2)
+        flow_gt = flow_gt.transpose(1, 0) if flow_gt is not None else None
+        bbox = bbox.transpose(1, 0)
+
         global_frame_id, crop_x0, crop_y0, crop_w, crop_h, full_w, full_h, sharpness = bbox.unbind(2)  # BxFx8
         mask_gt = (mask_gt[:, :, 0, :, :] > 0.9).float()  # BxFxHxW
         mask_dt = mask_dt / self.in_image_size
@@ -349,50 +366,6 @@ class MagicPony:
             flow_pred = None
         image_pred = shaded[:, :, :3]
         mask_pred = shaded[:, :, 3]
-
-        # save mask 
-        os.makedirs('mask', exist_ok=True)
-        for i in range(batch_size):
-            mask = mask_pred[i].detach().cpu().numpy()
-            mask = (mask * 255).astype(np.uint8)
-            mask = mask.transpose(1, 2, 0)
-            cv2.imwrite(f'mask/{i}.png', mask)
-
-        os.makedirs('new_pred_masks', exist_ok=True)
-        new_pred_masks = []
-        for i in range(batch_size):
-            mvp_i = mvp[i].detach().cpu().numpy()
-            rotation_matrix = np.array(mvp_i[:3, :3])
-            # Calculate pitch angle (in radians)
-            pitch = math.asin(rotation_matrix[1][2])
-            yaw = math.atan2(rotation_matrix[0][2] / math.cos(pitch), rotation_matrix[0][0] / math.cos(pitch))
-            azimuth_angle_deg = -math.degrees(yaw) - 90
-            if azimuth_angle_deg < 0:
-                azimuth_angle_deg += 360
-            azimuth_angle_deg = int(azimuth_angle_deg)
-            mask = cv2.imread(f'/home/canxk/MagicPony/data/horse_masked/horse-azimuth-{azimuth_angle_deg}.png')
-            # crop %20 from the edges
-            mask = cv2.resize(mask, (256, 256))
-            mask = mask[31:205, 51:205] 
-            mask = cv2.resize(mask, (256, 256))
-            mask = cv2.flip(mask, 1)
-            mask = 255 - mask
-            mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
-            cv2.imwrite(f'new_pred_masks/{i}.png', mask)
-            mask = np.expand_dims(mask, axis=0)  
-            mask = mask / 255
-            new_pred_masks.append(mask)
-        new_pred_masks = np.array(new_pred_masks)
-
-        # save gt 
-        os.makedirs('mask_gt', exist_ok=True)
-        for i in range(batch_size):
-            mask = mask_gt[i].detach().cpu().numpy()
-            mask = (mask * 255).astype(np.uint8)
-            mask = mask.transpose(1, 2, 0)
-            cv2.imwrite(f'mask_gt/{i}.png', mask)
-
-        mask_gt = torch.tensor(new_pred_masks).to(self.device)
 
         ## compute reconstruction losses
         losses = self.compute_reconstruction_losses(image_pred, image_gt, mask_pred, mask_gt, mask_dt, mask_valid, flow_pred, flow_gt, dino_feat_im_gt, dino_feat_im_pred, background_mode=self.background_mode, reduce=False)
