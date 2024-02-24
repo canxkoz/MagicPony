@@ -64,11 +64,11 @@ class Trainer:
         print(f"Loading checkpoint from {checkpoint_path}")
         cp = torch.load(checkpoint_path, map_location=self.device)
         self.model.load_model_state(cp)
-        if load_optim:
-            self.model.load_optimizer_state(cp)
+        # if load_optim:
+        #     self.model.load_optimizer_state(cp)
         self.metrics_trace = cp.get('metrics_trace', self.metrics_trace)
-        epoch = cp.get('epoch', 999)
-        total_iter = cp.get('total_iter', 999999)
+        epoch = 0
+        total_iter = 0
         return epoch, total_iter
 
     def save_checkpoint(self, epoch, total_iter=0, save_optim=True):
