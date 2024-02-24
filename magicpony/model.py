@@ -350,6 +350,50 @@ class MagicPony:
         image_pred = shaded[:, :, :3]
         mask_pred = shaded[:, :, 3]
 
+        # save mask 
+        os.makedirs('mask', exist_ok=True)
+        for i in range(batch_size):
+            mask = mask_pred[i].detach().cpu().numpy()
+            mask = (mask * 255).astype(np.uint8)
+            mask = mask.transpose(1, 2, 0)
+            cv2.imwrite(f'mask/{i}.png', mask)
+
+        os.makedirs('new_pred_masks', exist_ok=True)
+        new_pred_masks = []
+        for i in range(batch_size):
+            mvp_i = mvp[i].detach().cpu().numpy()
+            rotation_matrix = np.array(mvp_i[:3, :3])
+            # Calculate pitch angle (in radians)
+            pitch = math.asin(rotation_matrix[1][2])
+            yaw = math.atan2(rotation_matrix[0][2] / math.cos(pitch), rotation_matrix[0][0] / math.cos(pitch))
+            azimuth_angle_deg = -math.degrees(yaw) - 90
+            if azimuth_angle_deg < 0:
+                azimuth_angle_deg += 360
+            azimuth_angle_deg = int(azimuth_angle_deg)
+            mask = cv2.imread(f'/home/canxk/MagicPony/data/horse_masked/horse-azimuth-{azimuth_angle_deg}.png')
+            # crop %20 from the edges
+            mask = cv2.resize(mask, (256, 256))
+            mask = mask[31:205, 51:205] 
+            mask = cv2.resize(mask, (256, 256))
+            mask = cv2.flip(mask, 1)
+            mask = 255 - mask
+            mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+            cv2.imwrite(f'new_pred_masks/{i}.png', mask)
+            mask = np.expand_dims(mask, axis=0)  
+            mask = mask / 255
+            new_pred_masks.append(mask)
+        new_pred_masks = np.array(new_pred_masks)
+
+        # save gt 
+        os.makedirs('mask_gt', exist_ok=True)
+        for i in range(batch_size):
+            mask = mask_gt[i].detach().cpu().numpy()
+            mask = (mask * 255).astype(np.uint8)
+            mask = mask.transpose(1, 2, 0)
+            cv2.imwrite(f'mask_gt/{i}.png', mask)
+
+        mask_gt = torch.tensor(new_pred_masks).to(self.device)
+
         ## compute reconstruction losses
         losses = self.compute_reconstruction_losses(image_pred, image_gt, mask_pred, mask_gt, mask_dt, mask_valid, flow_pred, flow_gt, dino_feat_im_gt, dino_feat_im_pred, background_mode=self.background_mode, reduce=False)
         
