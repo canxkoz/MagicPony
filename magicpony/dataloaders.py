@@ -271,18 +271,31 @@ class ImageDataset(Dataset):
 
     def _parse_folder(self, path):
         image_path_suffix = self.image_loader[0]
-        result = sorted(glob(os.path.join(path, '**/*'+image_path_suffix), recursive=True))
-        if '*' in image_path_suffix:
-            image_path_suffix = re.findall(image_path_suffix, result[0])[0]
-            self.image_loader[0] = image_path_suffix
-        result = [p.replace(image_path_suffix, '{}') for p in result]
-        return result
+        result = sorted(glob(os.path.join(path, '**')))
+        grouped_result = []
+        for folder in result:
+            if os.path.isdir(folder):
+                files = sorted(glob(os.path.join(folder, '*'+image_path_suffix)))
+                if len(files) > 0:
+                    grouped_result.append(files)
 
-    def _load_ids(self, path, loader, transform=None):
-        x = loader[1](path.format(loader[0]), *loader[2:])
-        if transform:
-            x = transform(x)
-        return x
+        new_grouped_result = []
+        for _, files in enumerate(grouped_result):
+            if '*' in image_path_suffix:
+                image_path_suffix = re.findall(image_path_suffix, files[0])[0]
+                self.image_loader[0] = image_path_suffix
+            files = [p.replace(image_path_suffix, '{}') for p in files]
+            new_grouped_result.append(files)
+        return new_grouped_result
+
+    def _load_ids(self, paths, loader, transform=None):
+        xs = []
+        for path in paths:
+            x = loader[1](path.format(loader[0]), *loader[2:])
+            if transform:
+                x = transform(x)
+            xs.append(x)
+        return torch.stack(xs, 0)
 
     def __len__(self):
         return len(self.samples)
@@ -291,26 +304,34 @@ class ImageDataset(Dataset):
         self.random_xflip = random_xflip
 
     def __getitem__(self, index):
-        path = self.samples[index % len(self.samples)]
-        images = self._load_ids(path, self.image_loader, transform=self.image_transform).unsqueeze(0)
-        masks = self._load_ids(path, self.mask_loader, transform=self.mask_transform).unsqueeze(0)
-        mask_dt = compute_distance_transform(masks)
-        bboxs = self._load_ids(path, self.bbox_loader, transform=torch.FloatTensor).unsqueeze(0)
-        mask_valid = get_valid_mask(bboxs, (self.out_image_size, self.out_image_size))  # exclude pixels cropped outside the original image
+        paths = self.samples[index % len(self.samples)]
+        images = self._load_ids(paths, self.image_loader, transform=self.image_transform).unsqueeze(0)
+        masks = self._load_ids(paths, self.mask_loader, transform=self.mask_transform).unsqueeze(0)
+        new_mask_dt = []
+        for i in range(4):
+            mask_dt = compute_distance_transform(masks[:, i, :, :])
+            new_mask_dt.append(mask_dt[0])
+        mask_dt = torch.stack(new_mask_dt, 0)
+        bboxs = self._load_ids(paths, self.bbox_loader, transform=torch.FloatTensor).unsqueeze(0)
+        new_valid_mask = []
+        for i in range(4):
+            mask_valid = get_valid_mask(bboxs[:, i, :], (self.out_image_size, self.out_image_size))
+            new_valid_mask.append(mask_valid)
+        mask_valid = torch.stack(new_valid_mask, 0)
         flows = None
         if self.load_background:
-            bg_fpath = os.path.join(os.path.dirname(path), 'background_frame.jpg')
+            bg_fpath = os.path.join(os.path.dirname(paths), 'background_frame.jpg')
             assert os.path.isfile(bg_fpath)
             bg_image = torchvision.datasets.folder.default_loader(bg_fpath)
             bg_images = crop_image(bg_image, bboxs[:, 1:5].int().numpy(), (self.out_image_size, self.out_image_size))
         else:
             bg_images = None
         if self.load_dino_feature:
-            dino_features = torch.stack(self._load_ids(path, self.dino_feature_loader, transform=torch.FloatTensor), 0)  # 64x224x224
+            dino_features = torch.stack(self._load_ids(paths, self.dino_feature_loader, transform=torch.FloatTensor), 0)  # 64x224x224
         else:
             dino_features = None
         if self.load_dino_cluster:
-            dino_clusters = torch.stack(self._load_ids(path, self.dino_cluster_loader, transform=transforms.ToTensor()), 0)  # 3x55x55
+            dino_clusters = torch.stack(self._load_ids(paths, self.dino_cluster_loader, transform=transforms.ToTensor()), 0)  # 3x55x55
         else:
             dino_clusters = None
         seq_idx = torch.LongTensor([index])
@@ -320,8 +341,22 @@ class ImageDataset(Dataset):
         if self.random_xflip and np.random.rand() < 0.5:
             xflip = lambda x: None if x is None else x.flip(-1)
             images, masks, mask_dt, mask_valid, flows, bg_images, dino_features, dino_clusters = (*map(xflip, (images, masks, mask_dt, mask_valid, flows, bg_images, dino_features, dino_clusters)),)
-            bboxs = horizontal_flip_box(bboxs)  # NxK
+            new_bboxs = []
+            for i in range(4):
+                bbox = horizontal_flip_box(bboxs[:, i, :])
+                new_bboxs.append(bbox)
+            bboxs = torch.stack(new_bboxs, 1)
 
+        # get first 4 mask in the masks
+        masks = masks[:, :4, :, :]
+        images = images[:, :4, :, :]
+        
+        # remove the first dimension
+        images = images.squeeze(0)
+        masks = masks.squeeze(0)
+        mask_valid = mask_valid.squeeze(0)
+        bboxs = bboxs.squeeze(0)
+        bg_images = bg_images.squeeze(0) if bg_images is not None else None
         out = (*map(none_to_nan, (images, masks, mask_dt, mask_valid, flows, bboxs, bg_images, dino_features, dino_clusters, seq_idx, frame_idx)),)  # for batch collation
         return out
 
