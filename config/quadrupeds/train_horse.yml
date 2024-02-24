@@ -1,14 +1,14 @@
 ## trainer
 run_train: true
 num_epochs: 120
-batch_size: 10
-checkpoint_dir: results/quadrupeds/final_horse
-save_checkpoint_freq: 5
+batch_size: 1
+checkpoint_dir: results/quadrupeds/pretrained_horse
+save_checkpoint_freq: 1
 keep_num_checkpoint: -1  # -1 for keeping all checkpoints
 archive_code: true
 resume: true
 use_logger: true
-log_image_freq: 500
+log_image_freq: 2000
 log_loss_freq: 50
 save_train_result_freq: 10000
 log_train: true
@@ -16,13 +16,13 @@ log_val: true
 fix_log_batch: false
 
 ## dataloader
-data_type: sequence  # sequence, image
+data_type: image  # sequence, image
 in_image_size: 256  # input image size
 out_image_size: 256  # rendered image size
 load_flow: false
-load_dino_feature: true
-load_dino_cluster: false
-train_data_dir: data/horse_combined/train
+load_dino_feature: false # I turned this to false because the newly obtained images from wonder3d does not have dino features.
+load_dino_cluster: false # I can stil obtain a consistent skeleton without dino features though.  
+train_data_dir: data/augmented_dataset/train
 random_sample_train_frames: false
 random_sample_val_frames: true
 random_shuffle_train_samples: true
