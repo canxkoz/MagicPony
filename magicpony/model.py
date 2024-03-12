@@ -313,7 +313,7 @@ class MagicPony:
         input_image, mask_gt, mask_dt, mask_valid, flow_gt, bbox, bg_image, dino_feat_im, dino_cluster_im, seq_idx, frame_idx = (*map(lambda x: validate_tensor_to_device(x, self.device), batch),)
 
         # BFxCxHxW
-        input_image = input_image.transpose(1, 0) # 1 batch, 6 frame, 3 channel, 256H, 256W --> 6, 1, 3, 256, 256
+        input_image = input_image.transpose(1, 0) # 1, 6, 3, 256, 256 --> 6, 1, 3, 256, 256
         mask_gt = mask_gt.transpose(1, 0)
         mask_dt = mask_dt.transpose(1, 0)
         mask_valid = mask_valid.transpose(1, 0)
@@ -321,28 +321,83 @@ class MagicPony:
         flow_gt = flow_gt.transpose(1, 0) if flow_gt is not None else None
         bbox = bbox.transpose(1, 0)
 
-        global_frame_id, crop_x0, crop_y0, crop_w, crop_h, full_w, full_h, sharpness = bbox.unbind(2)  # BxFx8
-        mask_gt = (mask_gt[:, :, 0, :, :] > 0.9).float()  # BxFxHxW
-        mask_dt = mask_dt / self.in_image_size
-        batch_size, num_frames, _, _, _ = input_image.shape  # BxFxCxHxW
-        h = w = self.out_image_size
-        aux_viz = {}
+        # load the correct grid resolution
+        dmtet_grid_res = self.dmtet_grid_res_smaller if epoch < self.dmtet_grid_res_smaller_epoch else self.dmtet_grid_res
+        if self.netPrior.netShape.grid_res != dmtet_grid_res:
+            self.netPrior.netShape.load_tets(dmtet_grid_res)
+            
+        ## predict prior shape and DINO features
+        prior_shape, dino_net = self.netPrior(total_iter=total_iter, is_training=is_training)
 
-        dino_feat_im_gt = None if dino_feat_im is None else expandBF(torch.nn.functional.interpolate(collapseBF(dino_feat_im), size=[h, w], mode="bilinear"), batch_size, num_frames)[:, :, :self.dino_feature_recon_dim]
-        dino_cluster_im_gt = None if dino_cluster_im is None else expandBF(torch.nn.functional.interpolate(collapseBF(dino_cluster_im), size=[h, w], mode="nearest"), batch_size, num_frames)
-        
+        total_losses = []
+        image_preds = []
+        mask_preds = []
+        aux_viz = {}
+        for i in range(input_image.shape[0]):
+            input_image_1 = input_image[i].unsqueeze(0)
+            mask_gt_1 = mask_gt[i].unsqueeze(0)
+            mask_dt_1 = mask_dt[i].unsqueeze(0)
+            mask_valid_1 = mask_valid[i].unsqueeze(0)
+            flow_gt_1 = flow_gt[i].unsqueeze(0) if flow_gt is not None else None
+            bbox_1 = bbox[i].unsqueeze(0)
+
+            global_frame_id, _, _, _, _, _, _, _ = bbox_1.unbind(2)  # BxFx8
+            mask_gt_1 = (mask_gt_1[:, :, 0, :, :] > 0.9).float()  # BxFxHxW
+            mask_dt_1 = mask_dt_1 / self.in_image_size
+            batch_size, num_frames, _, _, _ = input_image_1.shape  # BxFxCxHxW
+            h = w = self.out_image_size
+
+            dino_feat_im_gt = None if dino_feat_im is None else expandBF(torch.nn.functional.interpolate(collapseBF(dino_feat_im), size=[h, w], mode="bilinear"), batch_size, num_frames)[:, :, :self.dino_feature_recon_dim]
+            dino_cluster_im_gt = None if dino_cluster_im is None else expandBF(torch.nn.functional.interpolate(collapseBF(dino_cluster_im), size=[h, w], mode="nearest"), batch_size, num_frames)
+            
+            ## GT image
+            image_gt = input_image_1
+            if self.out_image_size != self.in_image_size:
+                image_gt = expandBF(torch.nn.functional.interpolate(collapseBF(image_gt), size=[h, w], mode='bilinear'), batch_size, num_frames)
+                if flow_gt_1 is not None:
+                    flow_gt_1 = expandBF(torch.nn.functional.interpolate(collapseBF(flow_gt_1), size=[h, w], mode="bilinear"), batch_size, num_frames-1)
+
+            ## predict instance specific parameters
+            shape, pose_raw, pose, mvp, w2c, campos, texture, im_features, deformation, arti_params, light, forward_aux = self.netInstance(input_image_1, prior_shape, epoch, total_iter, is_training=is_training)  # first two dim dimensions already collapsed N=(B*F)
+
+            ## render images
+            render_flow = self.render_flow and num_frames > 1
+            render_modes = ['shaded', 'dino_pred']
+            if render_flow:
+                render_modes += ['flow']
+            renders = self.render(render_modes, shape, texture, mvp, w2c, campos, (h, w), im_features=im_features, light=light, prior_shape=prior_shape, dino_net=dino_net, num_frames=num_frames)
+            renders = map(lambda x: expandBF(x, batch_size, num_frames), renders)
+            if render_flow:
+                shaded, dino_feat_im_pred, flow_pred = renders
+                flow_pred = flow_pred[:, :-1]  # Bx(F-1)x2xHxW
+            else:
+                shaded, dino_feat_im_pred = renders
+                flow_pred = None
+            image_pred = shaded[:, :, :3]
+            mask_pred = shaded[:, :, 3]
+
+            mask_preds.append(mask_pred[0])
+            image_preds.append(image_pred[0])
+
+            ## compute reconstruction losses
+            losses = self.compute_reconstruction_losses(image_pred, image_gt, mask_pred, mask_gt_1, mask_dt_1, mask_valid_1, flow_pred, flow_gt_1, dino_feat_im_gt, dino_feat_im_pred, background_mode=self.background_mode, reduce=False)
+            total_losses.append(losses)
+
+        # get mean of losses
+        total_loss_mean = [sum([losses[key] for losses in total_losses]) / len(total_losses) for key in total_losses[0].keys()]
+        losses = dict(zip(total_losses[0].keys(), total_loss_mean))
+
+        # original views and masks
+        mask_gt = (mask_gt[0, :, 0, :, :] > 0.9).float()  # BxFxHxW
+        mask_gt = mask_gt.unsqueeze(0)
+        mask_pred = mask_preds[0].unsqueeze(0)
+        image_pred = image_preds[0].unsqueeze(0)
+        input_image = input_image[0].unsqueeze(0)
+
         ## GT image
         image_gt = input_image
         if self.out_image_size != self.in_image_size:
             image_gt = expandBF(torch.nn.functional.interpolate(collapseBF(image_gt), size=[h, w], mode='bilinear'), batch_size, num_frames)
-            if flow_gt is not None:
-                flow_gt = expandBF(torch.nn.functional.interpolate(collapseBF(flow_gt), size=[h, w], mode="bilinear"), batch_size, num_frames-1)
-
-        ## predict prior shape and DINO
-        dmtet_grid_res = self.dmtet_grid_res_smaller if epoch < self.dmtet_grid_res_smaller_epoch else self.dmtet_grid_res
-        if self.netPrior.netShape.grid_res != dmtet_grid_res:
-            self.netPrior.netShape.load_tets(dmtet_grid_res)
-        prior_shape, dino_net = self.netPrior(total_iter=total_iter, is_training=is_training)
 
         ## predict instance specific parameters
         shape, pose_raw, pose, mvp, w2c, campos, texture, im_features, deformation, arti_params, light, forward_aux = self.netInstance(input_image, prior_shape, epoch, total_iter, is_training=is_training)  # first two dim dimensions already collapsed N=(B*F)
@@ -351,25 +406,6 @@ class MagicPony:
         rot_prob = forward_aux['rot_prob']
         aux_viz.update(forward_aux)
 
-        ## render images
-        render_flow = self.render_flow and num_frames > 1
-        render_modes = ['shaded', 'dino_pred']
-        if render_flow:
-            render_modes += ['flow']
-        renders = self.render(render_modes, shape, texture, mvp, w2c, campos, (h, w), im_features=im_features, light=light, prior_shape=prior_shape, dino_net=dino_net, num_frames=num_frames)
-        renders = map(lambda x: expandBF(x, batch_size, num_frames), renders)
-        if render_flow:
-            shaded, dino_feat_im_pred, flow_pred = renders
-            flow_pred = flow_pred[:, :-1]  # Bx(F-1)x2xHxW
-        else:
-            shaded, dino_feat_im_pred = renders
-            flow_pred = None
-        image_pred = shaded[:, :, :3]
-        mask_pred = shaded[:, :, 3]
-
-        ## compute reconstruction losses
-        losses = self.compute_reconstruction_losses(image_pred, image_gt, mask_pred, mask_gt, mask_dt, mask_valid, flow_pred, flow_gt, dino_feat_im_gt, dino_feat_im_pred, background_mode=self.background_mode, reduce=False)
-        
         ## supervise the rotation logits directly with reconstruction loss
         logit_loss_target = torch.zeros_like(expandBF(rot_logit, batch_size, num_frames))
         final_losses = {}
