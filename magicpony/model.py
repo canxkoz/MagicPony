@@ -313,13 +313,7 @@ class MagicPony:
         input_image, mask_gt, mask_dt, mask_valid, flow_gt, bbox, bg_image, dino_feat_im, dino_cluster_im, seq_idx, frame_idx = (*map(lambda x: validate_tensor_to_device(x, self.device), batch),)
 
         # BFxCxHxW
-        input_image = input_image.transpose(1, 0) # 1, 6, 3, 256, 256 --> 6, 1, 3, 256, 256
-        mask_gt = mask_gt.transpose(1, 0)
-        mask_dt = mask_dt.transpose(1, 0)
-        mask_valid = mask_valid.transpose(1, 0)
         mask_valid = mask_valid.squeeze(2)
-        flow_gt = flow_gt.transpose(1, 0) if flow_gt is not None else None
-        bbox = bbox.transpose(1, 0)
 
         # load the correct grid resolution
         dmtet_grid_res = self.dmtet_grid_res_smaller if epoch < self.dmtet_grid_res_smaller_epoch else self.dmtet_grid_res
@@ -333,13 +327,13 @@ class MagicPony:
         image_preds = []
         mask_preds = []
         aux_viz = {}
-        for i in range(input_image.shape[0]):
-            input_image_1 = input_image[i].unsqueeze(0)
-            mask_gt_1 = mask_gt[i].unsqueeze(0)
-            mask_dt_1 = mask_dt[i].unsqueeze(0)
-            mask_valid_1 = mask_valid[i].unsqueeze(0)
-            flow_gt_1 = flow_gt[i].unsqueeze(0) if flow_gt is not None else None
-            bbox_1 = bbox[i].unsqueeze(0)
+        for i in range(input_image.shape[1]):
+            input_image_1 = input_image[:, i].unsqueeze(1)
+            mask_gt_1 = mask_gt[:, i].unsqueeze(1)
+            mask_dt_1 = mask_dt[:, i].unsqueeze(1)
+            mask_valid_1 = mask_valid[:, i].unsqueeze(1)
+            flow_gt_1 = flow_gt[:, i].unsqueeze(1) if flow_gt is not None else None
+            bbox_1 = bbox[:, i].unsqueeze(1)
 
             global_frame_id, _, _, _, _, _, _, _ = bbox_1.unbind(2)  # BxFx8
             mask_gt_1 = (mask_gt_1[:, :, 0, :, :] > 0.9).float()  # BxFxHxW
@@ -376,8 +370,8 @@ class MagicPony:
             image_pred = shaded[:, :, :3]
             mask_pred = shaded[:, :, 3]
 
-            mask_preds.append(mask_pred[0])
-            image_preds.append(image_pred[0])
+            mask_preds.append(mask_pred)
+            image_preds.append(image_pred)
 
             ## compute reconstruction losses
             losses = self.compute_reconstruction_losses(image_pred, image_gt, mask_pred, mask_gt_1, mask_dt_1, mask_valid_1, flow_pred, flow_gt_1, dino_feat_im_gt, dino_feat_im_pred, background_mode=self.background_mode, reduce=False)
@@ -388,11 +382,11 @@ class MagicPony:
         losses = dict(zip(total_losses[0].keys(), total_loss_mean))
 
         # original views and masks
-        mask_gt = (mask_gt[0, :, 0, :, :] > 0.9).float()  # BxFxHxW
-        mask_gt = mask_gt.unsqueeze(0)
-        mask_pred = mask_preds[0].unsqueeze(0)
-        image_pred = image_preds[0].unsqueeze(0)
-        input_image = input_image[0].unsqueeze(0)
+        mask_gt = (mask_gt[:, 0, 0, :, :] > 0.9).float()  # BxFxHxW
+        mask_gt = mask_gt.unsqueeze(1)
+        input_image = input_image[:, 0].unsqueeze(1)
+        mask_pred = mask_preds[0]
+        image_pred = image_preds[0]
 
         ## GT image
         image_gt = input_image

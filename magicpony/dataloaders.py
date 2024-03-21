@@ -308,13 +308,13 @@ class ImageDataset(Dataset):
         images = self._load_ids(paths, self.image_loader, transform=self.image_transform).unsqueeze(0)
         masks = self._load_ids(paths, self.mask_loader, transform=self.mask_transform).unsqueeze(0)
         new_mask_dt = []
-        for i in range(4):
+        for i in range(6):
             mask_dt = compute_distance_transform(masks[:, i, :, :])
             new_mask_dt.append(mask_dt[0])
         mask_dt = torch.stack(new_mask_dt, 0)
         bboxs = self._load_ids(paths, self.bbox_loader, transform=torch.FloatTensor).unsqueeze(0)
         new_valid_mask = []
-        for i in range(4):
+        for i in range(6):
             mask_valid = get_valid_mask(bboxs[:, i, :], (self.out_image_size, self.out_image_size))
             new_valid_mask.append(mask_valid)
         mask_valid = torch.stack(new_valid_mask, 0)
@@ -341,21 +341,22 @@ class ImageDataset(Dataset):
         if self.random_xflip and np.random.rand() < 0.5:
             xflip = lambda x: None if x is None else x.flip(-1)
             images, masks, mask_dt, mask_valid, flows, bg_images, dino_features, dino_clusters = (*map(xflip, (images, masks, mask_dt, mask_valid, flows, bg_images, dino_features, dino_clusters)),)
-            new_bboxs = []
-            for i in range(4):
-                bbox = horizontal_flip_box(bboxs[:, i, :])
-                new_bboxs.append(bbox)
-            bboxs = torch.stack(new_bboxs, 1)
+        new_bboxs = []
+        for i in range(6):
+            bbox = horizontal_flip_box(bboxs[:, i, :])
+            new_bboxs.append(bbox)
+        bboxs = torch.stack(new_bboxs, 1)
 
         # get first 4 mask in the masks
-        masks = masks[:, :4, :, :]
-        images = images[:, :4, :, :]
+        masks = masks[:, :6, :, :]
+        images = images[:, :6, :, :]
         
         # remove the first dimension
         images = images.squeeze(0)
         masks = masks.squeeze(0)
         mask_valid = mask_valid.squeeze(0)
         bboxs = bboxs.squeeze(0)
+
         bg_images = bg_images.squeeze(0) if bg_images is not None else None
         out = (*map(none_to_nan, (images, masks, mask_dt, mask_valid, flows, bboxs, bg_images, dino_features, dino_clusters, seq_idx, frame_idx)),)  # for batch collation
         return out
