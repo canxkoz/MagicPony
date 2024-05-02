@@ -327,7 +327,7 @@ class ImageDataset(Dataset):
         else:
             bg_images = None
         if self.load_dino_feature:
-            dino_features = torch.stack(self._load_ids(paths, self.dino_feature_loader, transform=torch.FloatTensor), 0)  # 64x224x224
+            dino_features = self._load_ids(paths, self.dino_feature_loader, transform=torch.FloatTensor)
         else:
             dino_features = None
         if self.load_dino_cluster:
@@ -347,16 +347,16 @@ class ImageDataset(Dataset):
             new_bboxs.append(bbox)
         bboxs = torch.stack(new_bboxs, 1)
 
-        # get first 4 mask in the masks
+        # get first 6 mask in the masks
         masks = masks[:, :6, :, :]
         images = images[:, :6, :, :]
+        dino_features = dino_features[:6, :, :, :]
         
         # remove the first dimension
         images = images.squeeze(0)
         masks = masks.squeeze(0)
         mask_valid = mask_valid.squeeze(0)
         bboxs = bboxs.squeeze(0)
-
         bg_images = bg_images.squeeze(0) if bg_images is not None else None
         out = (*map(none_to_nan, (images, masks, mask_dt, mask_valid, flows, bboxs, bg_images, dino_features, dino_clusters, seq_idx, frame_idx)),)  # for batch collation
         return out
