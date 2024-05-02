@@ -1,7 +1,7 @@
 ## trainer
 run_train: true
 num_epochs: 120
-batch_size: 3
+batch_size: 2 # 2 is okey, 3 sometimes caused to oom error.
 checkpoint_dir: results/quadrupeds/pretrained_horse
 save_checkpoint_freq: 1
 keep_num_checkpoint: -1  # -1 for keeping all checkpoints
@@ -20,8 +20,8 @@ data_type: image  # sequence, image
 in_image_size: 256  # input image size
 out_image_size: 256  # rendered image size
 load_flow: false
-load_dino_feature: false # I turned this to false because the newly obtained images from wonder3d does not have dino features.
-load_dino_cluster: false # I can stil obtain a consistent skeleton without dino features though.  
+load_dino_feature: true # now we added dino features to our training as well.
+load_dino_cluster: false 
 train_data_dir: data/augmented_dataset/train
 random_sample_train_frames: false
 random_sample_val_frames: true
@@ -97,7 +97,7 @@ articulation_feature_mode: sample+global  # 'global', 'sample', 'sample+global'
 num_layers_arti: 4
 embedder_freq_arti: 8
 num_body_bones: 8
-body_bones_mode: z_minmax_y+  # z_minmax, z_minmax_y+
+body_bones_mode: z_minmax_y+  # z_minmax (mehh), z_minmax_y+ (this one is better)
 num_legs: 4
 num_leg_bones: 3
 attach_legs_to_body_epochs: [5, 1000] # we will fix the problem about legs wtih these params.
