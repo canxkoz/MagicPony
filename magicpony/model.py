@@ -323,9 +323,13 @@ class MagicPony:
         ## predict prior shape and DINO features
         prior_shape, dino_net = self.netPrior(total_iter=total_iter, is_training=is_training)
 
+        feats = []
+        #shapes = []
+        #textures = []
         total_losses = []
         image_preds = []
         mask_preds = []
+        dino_feat_im_preds = []
         aux_viz = {}
         for i in range(input_image.shape[1]):
             input_image_1 = input_image[:, i].unsqueeze(1)
@@ -334,6 +338,7 @@ class MagicPony:
             mask_valid_1 = mask_valid[:, i].unsqueeze(1)
             flow_gt_1 = flow_gt[:, i].unsqueeze(1) if flow_gt is not None else None
             bbox_1 = bbox[:, i].unsqueeze(1)
+            dino_feat_im_1 = dino_feat_im[:, i].unsqueeze(1) if dino_feat_im is not None else None
 
             global_frame_id, _, _, _, _, _, _, _ = bbox_1.unbind(2)  # BxFx8
             mask_gt_1 = (mask_gt_1[:, :, 0, :, :] > 0.9).float()  # BxFxHxW
@@ -341,7 +346,7 @@ class MagicPony:
             batch_size, num_frames, _, _, _ = input_image_1.shape  # BxFxCxHxW
             h = w = self.out_image_size
 
-            dino_feat_im_gt = None if dino_feat_im is None else expandBF(torch.nn.functional.interpolate(collapseBF(dino_feat_im), size=[h, w], mode="bilinear"), batch_size, num_frames)[:, :, :self.dino_feature_recon_dim]
+            dino_feat_im_gt = None if dino_feat_im_1 is None else expandBF(torch.nn.functional.interpolate(collapseBF(dino_feat_im_1), size=[h, w], mode="bilinear"), batch_size, num_frames)[:, :, :self.dino_feature_recon_dim]
             dino_cluster_im_gt = None if dino_cluster_im is None else expandBF(torch.nn.functional.interpolate(collapseBF(dino_cluster_im), size=[h, w], mode="nearest"), batch_size, num_frames)
             
             ## GT image
@@ -351,8 +356,12 @@ class MagicPony:
                 if flow_gt_1 is not None:
                     flow_gt_1 = expandBF(torch.nn.functional.interpolate(collapseBF(flow_gt_1), size=[h, w], mode="bilinear"), batch_size, num_frames-1)
 
-            ## predict instance specific parameters
+            ## predict instance specific parameters just do this for the first frame and never run it again /get the rest of these from these from the frame and camera
             shape, pose_raw, pose, mvp, w2c, campos, texture, im_features, deformation, arti_params, light, forward_aux = self.netInstance(input_image_1, prior_shape, epoch, total_iter, is_training=is_training)  # first two dim dimensions already collapsed N=(B*F)
+
+            #shapes.append(shape)
+            #textures.append(texture)
+            feats.append(im_features)
 
             ## render images
             render_flow = self.render_flow and num_frames > 1
@@ -369,9 +378,11 @@ class MagicPony:
                 flow_pred = None
             image_pred = shaded[:, :, :3]
             mask_pred = shaded[:, :, 3]
+            dino_feat_im_pred = dino_feat_im_pred[:, :, :self.dino_feature_recon_dim]
 
             mask_preds.append(mask_pred)
             image_preds.append(image_pred)
+            dino_feat_im_preds.append(dino_feat_im_pred)
 
             ## compute reconstruction losses
             losses = self.compute_reconstruction_losses(image_pred, image_gt, mask_pred, mask_gt_1, mask_dt_1, mask_valid_1, flow_pred, flow_gt_1, dino_feat_im_gt, dino_feat_im_pred, background_mode=self.background_mode, reduce=False)
@@ -379,6 +390,7 @@ class MagicPony:
 
         # get mean of losses
         total_loss_mean = [sum([losses[key] for losses in total_losses]) / len(total_losses) for key in total_losses[0].keys()]
+        total_loss_mean += torch.var(torch.stack(feats, dim=0).transpose(0, 1), dim=0)
         losses = dict(zip(total_losses[0].keys(), total_loss_mean))
 
         # original views and masks
@@ -387,6 +399,7 @@ class MagicPony:
         input_image = input_image[:, 0].unsqueeze(1)
         mask_pred = mask_preds[0]
         image_pred = image_preds[0]
+        dino_feat_im_pred = dino_feat_im_preds[0]
 
         ## GT image
         image_gt = input_image
