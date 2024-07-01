@@ -89,6 +89,7 @@ class MagicPony:
         load_dino_feature = cfgs.get('load_dino_feature', False)
         load_dino_cluster = cfgs.get('load_dino_cluster', False)
         dino_feature_dim = cfgs.get('dino_feature_dim', 64)
+        novel_view_count = cfgs.get('view_count', 6)
 
         if data_type == 'sequence':
             skip_beginning = cfgs.get('skip_beginning', 4)
@@ -118,6 +119,7 @@ class MagicPony:
         elif data_type == 'image':
             get_loader = lambda is_train, random_sample_frames=False, **kwargs: get_image_loader(
                 batch_size=batch_size,
+                novel_view_count=novel_view_count,
                 num_workers=num_workers,
                 in_image_size=in_image_size,
                 out_image_size=out_image_size,

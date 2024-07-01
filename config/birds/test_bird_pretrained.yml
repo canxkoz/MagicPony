@@ -2,6 +2,7 @@
 run_train: false
 run_test: true
 batch_size: 10
+view_count: 3
 checkpoint_dir: results/birds/pretrained_bird
 checkpoint_name: pretrained_bird.pth
 archive_code: false

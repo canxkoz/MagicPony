@@ -2,6 +2,7 @@
 run_train: true
 num_epochs: 120
 batch_size: 2 # 2 is okey, 3 sometimes caused to oom error.
+view_count: 3
 checkpoint_dir: results/quadrupeds/pretrained_horse
 save_checkpoint_freq: 1
 keep_num_checkpoint: -1  # -1 for keeping all checkpoints

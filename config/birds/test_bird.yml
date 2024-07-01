@@ -2,6 +2,7 @@
 run_train: false
 run_test: true
 batch_size: 10
+view_count: 3
 checkpoint_dir: results/birds/final_bird
 checkpoint_name: checkpoint0020.pth
 archive_code: false

@@ -248,7 +248,7 @@ def get_sequence_loader(data_dir, batch_size=256, num_workers=4, in_image_size=2
 
 
 class ImageDataset(Dataset):
-    def __init__(self, root, in_image_size=256, out_image_size=256, shuffle=False, load_background=False, random_xflip=False, load_dino_feature=False, load_dino_cluster=False, dino_feature_dim=64):
+    def __init__(self, root, in_image_size=256, out_image_size=256, novel_view_count=6, shuffle=False, load_background=False, random_xflip=False, load_dino_feature=False, load_dino_cluster=False, dino_feature_dim=64):
         super().__init__()
         self.image_loader = ["rgb.*", torchvision.datasets.folder.default_loader]
         self.mask_loader = ["mask.png", torchvision.datasets.folder.default_loader]
@@ -268,6 +268,7 @@ class ImageDataset(Dataset):
             self.dino_cluster_loader = ["clusters.png", torchvision.datasets.folder.default_loader]
         self.load_background = load_background
         self.random_xflip = random_xflip
+        self.novel_view_count = novel_view_count
 
     def _parse_folder(self, path):
         image_path_suffix = self.image_loader[0]
@@ -305,6 +306,15 @@ class ImageDataset(Dataset):
 
     def __getitem__(self, index):
         paths = self.samples[index % len(self.samples)]
+
+        if self.novel_view_count == 3:
+            paths.pop(2)
+            paths.pop(3)
+        elif self.novel_view_count == 6:
+            pass
+        else:
+            raise ValueError("novel_view_count should be 3 or 6")
+        
         images = self._load_ids(paths, self.image_loader, transform=self.image_transform).unsqueeze(0)
         masks = self._load_ids(paths, self.mask_loader, transform=self.mask_transform).unsqueeze(0)
 
@@ -365,8 +375,8 @@ class ImageDataset(Dataset):
         return out
 
 
-def get_image_loader(data_dir, batch_size=256, num_workers=4, in_image_size=256, out_image_size=256, shuffle=False, load_background=False, random_xflip=False, load_dino_feature=False, load_dino_cluster=False, dino_feature_dim=64):
-    dataset = ImageDataset(data_dir, in_image_size=in_image_size, out_image_size=out_image_size, load_background=load_background, random_xflip=random_xflip, load_dino_feature=load_dino_feature, load_dino_cluster=load_dino_cluster, dino_feature_dim=dino_feature_dim)
+def get_image_loader(data_dir, batch_size=256, novel_view_count=6, num_workers=4, in_image_size=256, out_image_size=256, shuffle=False, load_background=False, random_xflip=False, load_dino_feature=False, load_dino_cluster=False, dino_feature_dim=64):
+    dataset = ImageDataset(data_dir, in_image_size=in_image_size, out_image_size=out_image_size, novel_view_count=novel_view_count, load_background=load_background, random_xflip=random_xflip, load_dino_feature=load_dino_feature, load_dino_cluster=load_dino_cluster, dino_feature_dim=dino_feature_dim)
     loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
