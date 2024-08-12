@@ -316,21 +316,12 @@ class ImageDataset(Dataset):
             raise ValueError("novel_view_count should be 3 or 6")
         
         images = self._load_ids(paths, self.image_loader, transform=self.image_transform).unsqueeze(0)
-        masks = self._load_ids(paths, self.mask_loader, transform=self.mask_transform).unsqueeze(0)
-
-        view_count = int(masks.shape[1])
-
-        new_mask_dt = []
-        for i in range(view_count):
-            mask_dt = compute_distance_transform(masks[:, i, :, :])
-            new_mask_dt.append(mask_dt[0])
-        mask_dt = torch.stack(new_mask_dt, 0)
-        bboxs = self._load_ids(paths, self.bbox_loader, transform=torch.FloatTensor).unsqueeze(0)
-        new_valid_mask = []
-        for i in range(view_count):
-            mask_valid = get_valid_mask(bboxs[:, i, :], (self.out_image_size, self.out_image_size))
-            new_valid_mask.append(mask_valid)
-        mask_valid = torch.stack(new_valid_mask, 0)
+        masks = self._load_ids(paths, self.mask_loader, transform=self.mask_transform)
+        mask_dt = compute_distance_transform(masks)
+        masks = masks.unsqueeze(0)
+        bboxs = self._load_ids(paths, self.bbox_loader, transform=torch.FloatTensor)
+        mask_valid = get_valid_mask(bboxs, (self.out_image_size, self.out_image_size))  # exclude pixels cropped outside the original image
+        bboxs = bboxs.unsqueeze(0)
         flows = None
         if self.load_background:
             bg_fpath = os.path.join(os.path.dirname(paths), 'background_frame.jpg')
@@ -354,17 +345,7 @@ class ImageDataset(Dataset):
         if self.random_xflip and np.random.rand() < 0.5:
             xflip = lambda x: None if x is None else x.flip(-1)
             images, masks, mask_dt, mask_valid, flows, bg_images, dino_features, dino_clusters = (*map(xflip, (images, masks, mask_dt, mask_valid, flows, bg_images, dino_features, dino_clusters)),)
-        new_bboxs = []
-        for i in range(view_count):
-            bbox = horizontal_flip_box(bboxs[:, i, :])
-            new_bboxs.append(bbox)
-        bboxs = torch.stack(new_bboxs, 1)
 
-        # get first 6 mask in the masks
-        masks = masks[:, :view_count, :, :]
-        images = images[:, :view_count, :, :]
-        dino_features = dino_features[:view_count, :, :, :]
-        
         # remove the first dimension
         images = images.squeeze(0)
         masks = masks.squeeze(0)
