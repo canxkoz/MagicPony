@@ -43,6 +43,7 @@ class MagicPony:
     def __init__(self, cfgs):
         self.cfgs = cfgs
         self.device = cfgs.get('device', 'cpu')
+        self.frame_count = 0
 
         self.num_epochs = cfgs.get('num_epochs', 10)
         self.lr = cfgs.get('lr', 1e-4)
@@ -577,7 +578,8 @@ class MagicPony:
 
         if save_results:
             b0 = self.cfgs.get('num_to_save_from_each_batch', batch_size*num_frames)
-            fnames = [f'{total_iter:07d}_{fid:10d}' for fid in collapseBF(global_frame_id.int())][:b0]
+            fnames = [f'{total_iter:07d}_{self.frame_count}' for fid in collapseBF(global_frame_id.int())][:b0]
+            self.frame_count += 1
             def save_image(name, image):
                 misc.save_images(save_dir, collapseBF(image)[:b0].clamp(0,1).detach().cpu().numpy(), suffix=name, fnames=fnames)
 
