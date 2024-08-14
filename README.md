@@ -143,6 +143,23 @@ folder that contains the extracted `cachedir` folder from the tar file.
 
 As A-CSM forgot to correct for their box padding, we add the 0.05 here for consistency.
 
+## Eval 3D Toy Birds
+
+First, download the 3D toy birds dataset from the link below to the data folder:
+```
+https://drive.google.com/file/d/1FPo7ShI8FjP6K8FJSmZ8IS4NHZye4wgV/view?usp=sharing
+```
+
+Then, run the following command to evaluate the 3D toy birds and get visuals, but first, make sure to have the pretrained model downloaded and the data downloaded after that you need to add these model and data paths to the config file:
+```
+python run.py --config config/birds/test_bird.yml --gpu 0 --num_workers 4
+```
+
+Lastly, run the following command to calculate chamfer distance, but you need to change paths in the script to the paths of the test results (line 9):
+```
+python scripts/eval_3d_toy_bird.py
+```
+
 ## TODO
 - [x] Test time texture finetuning
 - [x] Novel view visualization script

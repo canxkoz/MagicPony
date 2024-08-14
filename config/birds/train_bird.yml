@@ -1,6 +1,7 @@
 ## trainer
 run_train: true
 num_epochs: 20
+view_count: 3
 batch_size: 10
 checkpoint_dir: results/birds/final_bird
 save_checkpoint_freq: 2
